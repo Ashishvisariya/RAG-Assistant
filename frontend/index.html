@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RAG Assistant</title>
+    <meta name="description" content="AI document assistant powered by Groq, LangGraph, and Chroma." />
+    <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+    <div class="app-shell">
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <button class="sidebar-collapse" id="sidebar-toggle" type="button" aria-label="Toggle sidebar">☰</button>
+                <div class="brand">
+                    <div class="brand-mark">R</div>
+                    <div>
+                        <div class="brand-name">RAG Assistant</div>
+                        <div class="brand-subtitle">Document intelligence</div>
+                    </div>
+                </div>
+            </div>
+
+            <button id="new-chat" class="primary-action" type="button">＋ New chat</button>
+
+            <div class="panel-section">
+                <div class="panel-label">Knowledge base</div>
+                <label class="secondary-action upload-trigger" for="pdf-file">Upload PDF</label>
+                <input id="pdf-file" type="file" accept=".pdf,application/pdf" hidden />
+                <div id="upload-status" class="upload-status" aria-live="polite">No PDF selected.</div>
+                <div id="document-list" class="document-list" aria-live="polite"></div>
+            </div>
+
+            <div class="sidebar-footer">
+                <span class="status-dot" id="status-dot" aria-hidden="true"></span>
+                <span id="api-status" role="status">Checking API…</span>
+            </div>
+        </aside>
+
+        <div class="sidebar-backdrop" id="sidebar-backdrop" hidden></div>
+
+        <main class="main-panel">
+            <header class="topbar">
+                <div>
+                    <div class="eyebrow">AI workspace</div>
+                    <h1>Ask your documents</h1>
+                </div>
+                <div class="topbar-actions">
+                    <button id="suggest-btn" class="ghost-btn" type="button">Generate questions</button>
+                </div>
+            </header>
+
+            <section class="chat-panel" aria-label="Conversation area">
+                <div id="welcome" class="welcome-state">
+                    <div class="welcome-mark">✦</div>
+                    <h2>Ask a question about your documents.</h2>
+                    <p>Upload a PDF to create a grounded answer from your indexed material, or ask a general question when you want broader context.</p>
+                    <div id="suggestions" class="suggestion-grid" aria-label="Suggested prompts">
+                        <button type="button" class="suggestion">Summarize this document.</button>
+                        <button type="button" class="suggestion">Explain the key concepts.</button>
+                        <button type="button" class="suggestion">Find the main findings.</button>
+                        <button type="button" class="suggestion">Identify important definitions.</button>
+                    </div>
+                </div>
+                <div id="messages" class="messages" aria-live="polite" aria-relevant="additions"></div>
+            </section>
+
+            <footer class="composer-shell">
+                <form id="chat-form" class="composer" novalidate>
+                    <textarea id="question-input" name="question" rows="1" maxlength="4000" placeholder="Ask a question about your documents…" aria-label="Your question"></textarea>
+                    <button id="send-btn" class="send-btn" type="submit" aria-label="Send message">➤</button>
+                </form>
+                <div class="composer-footnote">AI-generated responses may contain mistakes; verify important claims against the source documents.</div>
+            </footer>
+        </main>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

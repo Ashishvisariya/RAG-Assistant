@@ -1,0 +1,15 @@
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.venv/
+.env
+.git/
+.pytest_cache/
+.gitignore
+.vscode/
+.DS_Store
+sessions/
+chroma_db/
+active_chroma_dir.txt
+*.log
