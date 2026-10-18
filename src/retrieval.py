@@ -27,6 +27,6 @@ def retrieve_documents(question: str, k: int = 5, session_id: str | None = None)
 
     try:
         return vector_store.similarity_search(question.strip(), k=k)
-    except Exception as exc:
-        print(f"Retrieval error: {exc}")
+    except Exception:
+        print("Document retrieval failed.")
         return []

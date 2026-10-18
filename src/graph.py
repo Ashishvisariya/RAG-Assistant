@@ -19,7 +19,7 @@ load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
 def get_llm():
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        raise RuntimeError("GROQ_API_KEY is missing. Add it to the project root .env file.")
+        raise RuntimeError("GROQ_API_KEY is not configured in the environment.")
     model_name = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
     return ChatGroq(
         api_key=api_key,

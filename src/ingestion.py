@@ -1,3 +1,4 @@
+import os
 import re
 import shutil
 import uuid
@@ -10,8 +11,11 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
-PDF_DIR = PROJECT_DIR / "data" / "pdfs"
-CHROMA_DIR = PROJECT_DIR / "chroma_db"
+_data_dir = Path(os.getenv("RAG_DATA_DIR", str(PROJECT_DIR))).expanduser()
+DATA_DIR = (_data_dir if _data_dir.is_absolute() else PROJECT_DIR / _data_dir).resolve()
+PDF_DIR = DATA_DIR / "data" / "pdfs"
+CHROMA_DIR = DATA_DIR / "chroma_db"
+SESSION_DIR = DATA_DIR / "sessions"
 COLLECTION_NAME = "project_documents"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 INDEX_LOCK = Lock()
@@ -28,7 +32,7 @@ def normalize_session_id(session_id: str | None) -> str:
 
 def get_session_root(session_id: str | None = None) -> Path:
     session_name = normalize_session_id(session_id)
-    return PROJECT_DIR / "sessions" / session_name
+    return SESSION_DIR / session_name
 
 
 def get_session_pdf_dir(session_id: str | None = None) -> Path:
@@ -46,7 +50,7 @@ def get_session_chroma_dir(session_id: str | None = None) -> Path:
 def get_active_chroma_marker(session_id: str | None = None) -> Path:
     if session_id:
         return get_session_root(session_id) / "active_chroma_dir.txt"
-    return PROJECT_DIR / "active_chroma_dir.txt"
+    return DATA_DIR / "active_chroma_dir.txt"
 
 
 def get_active_chroma_dir(session_id: str | None = None) -> Path:
@@ -64,7 +68,13 @@ def get_active_chroma_dir(session_id: str | None = None) -> Path:
             pass
 
     candidates = [default_dir]
-    candidates.extend(sorted(PROJECT_DIR.glob("chroma_db_*"), key=lambda path: path.stat().st_mtime, reverse=True))
+    candidates.extend(
+        sorted(
+            default_dir.parent.glob(f"{default_dir.name}_*"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+    )
 
     for candidate in candidates:
         if candidate.is_dir():
@@ -74,7 +84,9 @@ def get_active_chroma_dir(session_id: str | None = None) -> Path:
 
 
 def write_active_chroma_dir(chroma_dir: Path, session_id: str | None = None) -> Path:
-    get_active_chroma_marker(session_id).write_text(str(chroma_dir), encoding="utf-8")
+    marker = get_active_chroma_marker(session_id)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(str(chroma_dir), encoding="utf-8")
     return chroma_dir
 
 
@@ -117,7 +129,7 @@ def create_vector_store(session_id: str | None = None):
         try:
             documents.extend(_load_pdf_documents(pdf_path))
         except Exception as exc:
-            print(f"Skipping unreadable PDF {pdf_path.name}: {exc}")
+            print("Skipping an unreadable PDF.")
 
     if not documents:
         raise ValueError("No readable text was found in the PDFs.")

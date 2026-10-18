@@ -10,6 +10,10 @@ services:
       - GROQ_API_KEY=${GROQ_API_KEY}
       - GROQ_MODEL=${GROQ_MODEL:-openai/gpt-oss-20b}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:80,http://127.0.0.1:80}
+      - RAG_DATA_DIR=/var/lib/rag
+      - HF_HOME=/var/lib/rag/huggingface
+    volumes:
+      - rag-data:/var/lib/rag
     ports:
       - "8001:8001"
     command: uvicorn app:app --host 0.0.0.0 --port 8001
@@ -23,3 +27,6 @@ services:
       - backend
     ports:
       - "80:80"
+
+volumes:
+  rag-data:

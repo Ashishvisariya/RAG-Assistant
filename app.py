@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from threading import Lock
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -19,7 +19,7 @@ def get_allowed_origins() -> list[str]:
         "ALLOWED_ORIGINS",
         "http://127.0.0.1:5500,http://localhost:5500,http://127.0.0.1:5501,http://localhost:5501,http://127.0.0.1:8000,http://localhost:8000,http://127.0.0.1:8001,http://localhost:8001",
     )
-    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+    return [origin.strip().rstrip("/") for origin in raw.split(",") if origin.strip()]
 
 
 app = FastAPI(
@@ -31,7 +31,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_allowed_origins(),
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
@@ -39,12 +39,12 @@ app.add_middleware(
 
 class QuestionRequest(BaseModel):
     question: str = Field(min_length=1, max_length=4000)
-    session_id: str | None = None
+    session_id: str | None = Field(default=None, max_length=128)
 
 
 class SuggestedQuestionsRequest(BaseModel):
     count: int = Field(default=5, ge=1, le=10)
-    session_id: str | None = None
+    session_id: str | None = Field(default=None, max_length=128)
 
 
 @app.get("/")
@@ -108,7 +108,7 @@ def ask(request: QuestionRequest):
             "session_id": session_id,
         }
     except Exception as exc:
-        print(f"Question answering error: {exc}")
+        print("Question answering failed.")
         raise HTTPException(
             status_code=500,
             detail="An error occurred while answering your question.",
@@ -127,11 +127,19 @@ def questions(request: SuggestedQuestionsRequest):
             return {"questions": [], "message": "No indexed documents are available.", "session_id": session_id}
         return {"questions": result, "session_id": session_id}
     except Exception as exc:
-        print(f"Question generation error: {exc}")
+        print("Question generation failed.")
         raise HTTPException(
             status_code=500,
             detail="Could not generate suggested questions.",
         ) from exc
+
+
+@app.get("/documents")
+def documents(session_id: str = Query(min_length=1, max_length=128)):
+    cleaned_session_id = normalize_session_id(session_id)
+    pdf_dir = get_session_pdf_dir(cleaned_session_id)
+    files = sorted(path.name for path in pdf_dir.glob("*.pdf")) if pdf_dir.exists() else []
+    return {"documents": files, "session_id": cleaned_session_id}
 
 
 @app.post("/upload")
@@ -139,9 +147,12 @@ async def upload_pdf(file: UploadFile = File(...), session_id: str = Form(defaul
     if not file.filename:
         raise HTTPException(status_code=400, detail="A filename is required.")
 
-    filename = Path(file.filename).name
+    filename = Path(file.filename.replace("\\", "/")).name
     if not filename or filename in {".", ".."} or Path(filename).suffix.lower() != ".pdf":
         raise HTTPException(status_code=400, detail="Please upload a valid PDF file.")
+
+    if len(session_id) > 128:
+        raise HTTPException(status_code=422, detail="Session ID must be 128 characters or fewer.")
 
     cleaned_session_id = None
     if session_id.strip():
@@ -170,7 +181,7 @@ async def upload_pdf(file: UploadFile = File(...), session_id: str = Form(defaul
                 create_vector_store(cleaned_session_id)
             except Exception as exc:
                 destination.unlink(missing_ok=True)
-                print(f"PDF indexing error: {exc}")
+                print("PDF indexing failed.")
                 raise HTTPException(
                     status_code=500,
                     detail="PDF indexing failed. Check that the PDF contains readable text and inspect the backend logs.",
@@ -185,7 +196,7 @@ async def upload_pdf(file: UploadFile = File(...), session_id: str = Form(defaul
     except HTTPException:
         raise
     except Exception as exc:
-        print(f"PDF upload error: {exc}")
+        print("PDF upload failed.")
         raise HTTPException(
             status_code=500,
             detail="An unexpected error occurred during PDF upload.",

@@ -1,9 +1,10 @@
 const API_BASE = (() => {
-    const origin = window.location.origin;
-    if (origin && origin !== "null" && !origin.startsWith("file://")) {
-        return origin;
+    const configured = window.RAG_API_BASE_URL?.trim();
+    if (configured) return configured.replace(/\/+$/, "");
+    if (["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+        return "http://127.0.0.1:8001";
     }
-    return "http://127.0.0.1:8001";
+    return window.location.origin;
 })();
 const chatForm = document.getElementById("chat-form");
 const questionInput = document.getElementById("question-input");
@@ -25,14 +26,56 @@ const documentList = document.getElementById("document-list");
 const SESSION_STORAGE_KEY = "rag_session_id";
 let busy = false;
 
+async function requestJson(path, options = {}) {
+    const response = await fetch(`${API_BASE}${path}`, options);
+    const text = await response.text();
+    let payload = null;
+
+    if (text.trim()) {
+        try {
+            payload = JSON.parse(text);
+        } catch {
+            throw new Error(`The server returned an invalid response (HTTP ${response.status}).`);
+        }
+    }
+
+    if (!response.ok) {
+        throw new Error(payload?.detail || `Request failed (HTTP ${response.status}).`);
+    }
+    if (payload === null) {
+        throw new Error("The server returned an empty response.");
+    }
+    return payload;
+}
+
 function getSessionId() {
     const existing = localStorage.getItem(SESSION_STORAGE_KEY);
     if (existing) {
         return existing;
     }
-    const sessionId = `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const sessionId = `user-${crypto.randomUUID()}`;
     localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
     return sessionId;
+}
+
+async function loadDocuments() {
+    try {
+        const query = new URLSearchParams({ session_id: getSessionId() });
+        const payload = await requestJson(`/documents?${query}`);
+        documentList.replaceChildren();
+        payload.documents.forEach((filename) => {
+            const document = document.createElement("div");
+            document.className = "document-pill";
+            const name = document.createElement("span");
+            name.textContent = filename;
+            const status = document.createElement("span");
+            status.textContent = "Indexed";
+            document.append(name, status);
+            documentList.appendChild(document);
+        });
+    } catch {
+        documentList.replaceChildren();
+    }
 }
 
 function escapeHtml(value = "") {
@@ -65,9 +108,7 @@ function setBusy(nextValue) {
 
 async function checkApi() {
     try {
-        const response = await fetch(`${API_BASE}/health`);
-        if (!response.ok) throw new Error("API unavailable");
-        const payload = await response.json();
+        const payload = await requestJson("/health");
         apiStatus.textContent = payload.status === "healthy" ? "API connected" : "API ready";
         statusDot.classList.remove("offline");
     } catch {
@@ -148,14 +189,11 @@ async function askQuestion(question) {
     const answerNode = addMessage("assistant", "Thinking…");
 
     try {
-        const response = await fetch(`${API_BASE}/ask`, {
+        const payload = await requestJson("/ask", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ question: trimmed, session_id: getSessionId() }),
         });
-
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.detail || "Could not get an answer.");
 
         const answerText = payload.answer || "No answer was returned.";
         const answerType = payload.answer_type || "general";
@@ -212,13 +250,11 @@ async function generateSuggestedQuestions() {
     suggestBtn.textContent = "Generating…";
 
     try {
-        const response = await fetch(`${API_BASE}/questions`, {
+        const payload = await requestJson("/questions", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ count: 5, session_id: getSessionId() }),
         });
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.detail || "Could not generate questions.");
 
         const questions = Array.isArray(payload.questions)
             ? payload.questions
@@ -275,12 +311,17 @@ function handleUpload(file) {
     uploadStatus.textContent = "Uploading and indexing…";
     pdfInput.disabled = true;
 
-    fetch(`${API_BASE}/upload`, { method: "POST", body: formData })
-        .then(async (response) => {
-            const payload = await response.json().catch(() => ({}));
-            if (!response.ok) throw new Error(payload.detail || "Upload failed.");
+    requestJson("/upload", { method: "POST", body: formData })
+        .then((payload) => {
             uploadStatus.textContent = `Indexed successfully: ${payload.filename}`;
-            documentList.innerHTML = `<div class="document-pill"><span>${payload.filename}</span><span>✓</span></div>`;
+            const document = document.createElement("div");
+            document.className = "document-pill";
+            const name = document.createElement("span");
+            name.textContent = payload.filename;
+            const status = document.createElement("span");
+            status.textContent = "Indexed";
+            document.append(name, status);
+            documentList.appendChild(document);
         })
         .catch((error) => {
             uploadStatus.textContent = `Error: ${error.message}`;
@@ -331,3 +372,4 @@ sidebarBackdrop.addEventListener("click", () => {
 
 resizeTextarea();
 checkApi();
+loadDocuments();

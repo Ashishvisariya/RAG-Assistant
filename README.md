@@ -35,7 +35,9 @@ Advanced RAG System/
 ├── Dockerfile.frontend
 ├── docker-compose.yml
 ├── nginx.conf
+├── render.yaml
 ├── requirements.txt
+├── requirements-dev.txt
 ├── .env.example
 ├── .dockerignore
 ├── README.md
@@ -43,6 +45,7 @@ Advanced RAG System/
 ├── data/
 │   └── pdfs/
 ├── frontend/
+│   ├── config.js
 │   ├── index.html
 │   ├── script.js
 │   └── style.css
@@ -109,6 +112,36 @@ Then access:
 - Frontend: `http://localhost`
 - Backend: `http://localhost:8001`
 - API docs: `http://localhost:8001/docs`
+
+## Render Deployment
+
+Deploy the repository as a Render Blueprint using `render.yaml`. It creates:
+
+- `advanced-rag-api`: Docker Web Service using `Dockerfile.backend`, with `/health` as its health check and a 10 GB persistent disk mounted at `/var/data`.
+- `advanced-rag-ui`: Static Site publishing `frontend/`. Its build command writes the backend service host into `frontend/config.js`.
+
+The Blueprint sets `RAG_DATA_DIR=/var/data`, so session PDFs, Chroma indexes, index markers, and the Hugging Face model cache live on the persistent disk. The backend uses the Render-injected `$PORT`. The Web Service's `starter` plan is required for a persistent disk; ephemeral storage on a free instance is not a durable substitute.
+
+Before deploying, provide `GROQ_API_KEY` as a secret in Render. `GROQ_MODEL` defaults to `openai/gpt-oss-20b`. The Blueprint allows the default frontend origin `https://advanced-rag-ui.onrender.com`; update `ALLOWED_ORIGINS` if Render assigns a different hostname or you add a custom domain. The frontend backend URL is linked from the Web Service host automatically.
+
+If deploying the services separately instead of using the Blueprint, configure the backend with:
+
+- Build: Dockerfile at `./Dockerfile.backend`, context `.`
+- Start: `uvicorn app:app --host 0.0.0.0 --port $PORT`
+- Health check path: `/health`
+- Persistent disk: mount at `/var/data`; set `RAG_DATA_DIR=/var/data`
+- Environment: `GROQ_API_KEY` (secret), `GROQ_MODEL`, `RAG_DATA_DIR`, `HF_HOME=/var/data/huggingface`, and `ALLOWED_ORIGINS=https://<your-static-site-host>`
+
+Configure the Static Site with root directory `.`, publish directory `frontend`, and a build step that writes `window.RAG_API_BASE_URL` in `frontend/config.js` to `https://<your-backend-host>` before publishing. Never put the Groq key in frontend settings or files.
+
+The API currently has no user authentication or authorization. Session IDs separate browser data but are not an access-control boundary; do not treat the public deployment as suitable for confidential documents without adding authentication and per-user authorization.
+
+Install test dependencies and run tests with:
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest -q
+```
 
 ## Notes
 

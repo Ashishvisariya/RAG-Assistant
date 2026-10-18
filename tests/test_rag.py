@@ -25,6 +25,20 @@ def test_root_and_health_endpoints():
     assert payload["status"] == "healthy"
 
 
+def test_documents_are_scoped_to_session(tmp_path, monkeypatch):
+    import src.ingestion as ingestion
+
+    monkeypatch.setattr(ingestion, "SESSION_DIR", tmp_path / "sessions")
+    pdf_dir = ingestion.get_session_pdf_dir("user-42")
+    pdf_dir.mkdir(parents=True)
+    (pdf_dir / "guide.pdf").write_bytes(b"%PDF-test")
+
+    response = client.get("/documents", params={"session_id": "user-42"})
+    assert response.status_code == 200
+    assert response.json()["documents"] == ["guide.pdf"]
+    assert client.get("/documents", params={"session_id": "user-43"}).json()["documents"] == []
+
+
 def test_invalid_question_is_rejected():
     result = client.post("/ask", json={"question": "   "})
     assert result.status_code in {400, 422}
@@ -37,6 +51,16 @@ def test_upload_rejects_non_pdf():
     )
     assert result.status_code == 400
     assert "PDF" in result.json()["detail"]
+
+
+def test_upload_rejects_oversized_pdf(monkeypatch):
+    monkeypatch.setattr("app.MAX_FILE_SIZE", 4)
+    result = client.post(
+        "/upload",
+        files={"file": ("large.pdf", b"%PDF-contents", "application/pdf")},
+    )
+    assert result.status_code == 413
+    assert "10 MB" in result.json()["detail"]
 
 
 def test_retrieve_documents_returns_results(monkeypatch):
@@ -94,7 +118,7 @@ def test_graph_answer_payload_contains_metadata(monkeypatch):
 def test_active_chroma_dir_prefers_latest_snapshot(tmp_path, monkeypatch):
     import src.ingestion as ingestion
 
-    monkeypatch.setattr(ingestion, "PROJECT_DIR", tmp_path)
+    monkeypatch.setattr(ingestion, "DATA_DIR", tmp_path)
     marker = tmp_path / "active_chroma_dir.txt"
     old_dir = tmp_path / "chroma_db"
     new_dir = tmp_path / "chroma_db_202406011200"
@@ -103,6 +127,17 @@ def test_active_chroma_dir_prefers_latest_snapshot(tmp_path, monkeypatch):
     marker.write_text(str(new_dir))
 
     assert ingestion.get_active_chroma_dir() == new_dir
+
+
+def test_session_index_does_not_fall_back_to_another_scope(tmp_path, monkeypatch):
+    import src.ingestion as ingestion
+
+    monkeypatch.setattr(ingestion, "PROJECT_DIR", tmp_path)
+    monkeypatch.setattr(ingestion, "SESSION_DIR", tmp_path / "sessions")
+    (tmp_path / "chroma_db_shared").mkdir()
+
+    expected = tmp_path / "sessions" / "user-42" / "chroma_db"
+    assert ingestion.get_active_chroma_dir("user-42") == expected
 
 
 def test_session_scopes_use_isolated_paths():

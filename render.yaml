@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: advanced-rag-api
+    runtime: docker
+    plan: starter
+    dockerContext: .
+    dockerfilePath: ./Dockerfile.backend
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    disk:
+      name: advanced-rag-data
+      mountPath: /var/data
+      sizeGB: 10
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-20b
+      - key: RAG_DATA_DIR
+        value: /var/data
+      - key: HF_HOME
+        value: /var/data/huggingface
+      - key: ALLOWED_ORIGINS
+        value: https://advanced-rag-ui.onrender.com
+
+  - type: web
+    name: advanced-rag-ui
+    runtime: static
+    buildCommand: >-
+      node -e 'const fs = require("node:fs"); const raw = process.env.RAG_API_BASE_URL || ""; const url = raw && !raw.startsWith("http") ? "https://" + raw : raw; fs.writeFileSync("frontend/config.js", "window.RAG_API_BASE_URL = " + JSON.stringify(url) + ";");'
+    staticPublishPath: ./frontend
+    envVars:
+      - key: RAG_API_BASE_URL
+        fromService:
+          type: web
+          name: advanced-rag-api
+          property: host

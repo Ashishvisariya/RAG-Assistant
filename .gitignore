@@ -10,7 +10,11 @@ __pycache__/
 .pytest_cache/
 *.pyc
 chroma_db/
+chroma_db_*/
+*.sqlite3
+*.sqlite3-*
 sessions/
 active_chroma_dir.txt
 data/pdfs/
+!.env.example
 .DS_Store
