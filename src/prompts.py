@@ -18,6 +18,19 @@ NO - if the passage is not relevant.
 )
 
 
+WEB_SEARCH_PROMPT = ChatPromptTemplate.from_template(
+    """
+You are an expert at formulating web search queries for Tavily Search.
+Given a user question, rewrite it into a concise, focused web search query.
+Do not add boolean operators like AND/OR, do not wrap in quotes unless exact match is needed, and keep it under 10 words.
+
+User question: {question}
+
+Web search query:
+"""
+)
+
+
 REWRITE_PROMPT = ChatPromptTemplate.from_template(
     """
 Rewrite the question to improve semantic search over a collection of PDF
@@ -40,7 +53,7 @@ Answer the user's question using ONLY the supplied context.
 Rules:
 1. Do not invent facts that are not supported by the context.
 2. If the context does not contain the answer, say so clearly.
-3. Cite supporting passages using their source labels, for example [report.pdf, page 3].
+3. Cite supporting passages using their source labels, for example [report.pdf, page 3] or [web: domain.com].
 4. Give a clear, direct answer with useful details.
 5. You may organize longer answers with headings or bullet points.
 

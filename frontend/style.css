@@ -404,6 +404,18 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, label:focus-v
     color: #f9ddb5;
 }
 
+.answer-badge.web {
+    border-color: rgba(56, 189, 248, 0.28);
+    background: rgba(56, 189, 248, 0.1);
+    color: #7dd3fc;
+}
+
+.answer-badge.hybrid {
+    border-color: rgba(192, 132, 252, 0.28);
+    background: rgba(192, 132, 252, 0.1);
+    color: #e9d5ff;
+}
+
 .source-list {
     display: flex;
     gap: 8px;
@@ -413,6 +425,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, label:focus-v
 
 .source-pill {
     display: inline-flex;
+    text-decoration: none;
     align-items: center;
     gap: 6px;
     padding: 4px 8px;

@@ -2,7 +2,7 @@ const API_BASE = (() => {
     const configured = window.RAG_API_BASE_URL?.trim();
     if (configured) return configured.replace(/\/+$/, "");
     if (["localhost", "127.0.0.1"].includes(window.location.hostname)) {
-        return "http://127.0.0.1:8001";
+        return "http://127.0.0.1:8000";
     }
     return window.location.origin;
 })();
@@ -24,6 +24,7 @@ const sidebarBackdrop = document.getElementById("sidebar-backdrop");
 const documentList = document.getElementById("document-list");
 
 const SESSION_STORAGE_KEY = "rag_session_id";
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // 100 MB
 let busy = false;
 
 async function requestJson(path, options = {}) {
@@ -109,12 +110,29 @@ function setBusy(nextValue) {
 async function checkApi() {
     try {
         const payload = await requestJson("/health");
-        apiStatus.textContent = payload.status === "healthy" ? "API connected" : "API ready";
+        let statusText = "API connected";
+        if (payload.tavily_configured) {
+            statusText += " (CRAG + Tavily ready)";
+        }
+        apiStatus.textContent = statusText;
         statusDot.classList.remove("offline");
     } catch {
-        apiStatus.textContent = "API offline";
+        apiStatus.textContent = "API offline (start backend on :8000)";
         statusDot.classList.add("offline");
     }
+}
+
+function getBadgeConfig(answerType, decision) {
+    if (decision === "correct" || answerType === "document_grounded") {
+        return { label: "🎯 Document Grounded", css: "document" };
+    }
+    if (decision === "ambiguous" || answerType === "hybrid_crag") {
+        return { label: "⚖️ Hybrid (Doc + Tavily Web)", css: "hybrid" };
+    }
+    if (answerType === "web_grounded") {
+        return { label: "🌐 Tavily Web Search", css: "web" };
+    }
+    return { label: "💡 General Knowledge", css: "general" };
 }
 
 function addMessage(role, text, options = {}) {
@@ -123,14 +141,14 @@ function addMessage(role, text, options = {}) {
 
     const avatar = document.createElement("div");
     avatar.className = "message-avatar";
-    avatar.textContent = role === "user" ? "Y" : "AI";
+    avatar.textContent = role === "user" ? "Y" : "CR";
 
     const content = document.createElement("div");
     content.className = "message-content";
 
     const label = document.createElement("div");
     label.className = "message-role";
-    label.textContent = role === "user" ? "You" : "Assistant";
+    label.textContent = role === "user" ? "You" : "CRAG Assistant";
 
     const textNode = document.createElement("div");
     textNode.className = `message-text${options.isError ? " error" : ""}`;
@@ -138,32 +156,6 @@ function addMessage(role, text, options = {}) {
 
     content.appendChild(label);
     content.appendChild(textNode);
-
-    if (options.answerType || options.sources?.length) {
-        const meta = document.createElement("div");
-        meta.className = "message-meta";
-
-        if (options.answerType) {
-            const badge = document.createElement("span");
-            badge.className = `answer-badge ${options.answerType === "document_grounded" ? "document" : "general"}`;
-            badge.textContent = options.answerType === "document_grounded" ? "Document-grounded" : "General answer";
-            meta.appendChild(badge);
-        }
-
-        if (options.sources?.length) {
-            const sourceList = document.createElement("div");
-            sourceList.className = "source-list";
-            options.sources.forEach((source) => {
-                const chip = document.createElement("span");
-                chip.className = "source-pill";
-                chip.textContent = `${source.source || "Document"}, p. ${source.page || "n/a"}`;
-                sourceList.appendChild(chip);
-            });
-            meta.appendChild(sourceList);
-        }
-
-        content.appendChild(meta);
-    }
 
     message.appendChild(avatar);
     message.appendChild(content);
@@ -186,7 +178,7 @@ async function askQuestion(question) {
     setBusy(true);
     resetWelcomeState();
 
-    const answerNode = addMessage("assistant", "Thinking…");
+    const answerNode = addMessage("assistant", "Evaluating with CRAG & retrieving…");
 
     try {
         const payload = await requestJson("/ask", {
@@ -197,24 +189,40 @@ async function askQuestion(question) {
 
         const answerText = payload.answer || "No answer was returned.";
         const answerType = payload.answer_type || "general";
+        const decision = payload.crag_decision || "none";
         const sources = Array.isArray(payload.sources) ? payload.sources : [];
 
         answerNode.innerHTML = formatMarkdown(answerText);
+
         const meta = document.createElement("div");
         meta.className = "message-meta";
+
+        // CRAG badge
+        const badgeConfig = getBadgeConfig(answerType, decision);
         const badge = document.createElement("span");
-        badge.className = `answer-badge ${answerType === "document_grounded" ? "document" : "general"}`;
-        badge.textContent = answerType === "document_grounded" ? "Document-grounded" : "General answer";
+        badge.className = `answer-badge ${badgeConfig.css}`;
+        badge.textContent = badgeConfig.label;
         meta.appendChild(badge);
 
         if (sources.length) {
             const sourceList = document.createElement("div");
             sourceList.className = "source-list";
             sources.forEach((source) => {
-                const chip = document.createElement("span");
-                chip.className = "source-pill";
-                chip.textContent = `${source.source || "Document"}, p. ${source.page || "n/a"}`;
-                sourceList.appendChild(chip);
+                const isWeb = String(source.source || "").startsWith("http");
+                if (isWeb) {
+                    const link = document.createElement("a");
+                    link.className = "source-pill source-web";
+                    link.href = source.source;
+                    link.target = "_blank";
+                    link.rel = "noopener noreferrer";
+                    link.textContent = `🌐 ${source.title || source.source}`;
+                    sourceList.appendChild(link);
+                } else {
+                    const chip = document.createElement("span");
+                    chip.className = "source-pill";
+                    chip.textContent = `📄 ${source.source || "Document"}, p. ${source.page || "n/a"}`;
+                    sourceList.appendChild(chip);
+                }
             });
             meta.appendChild(sourceList);
         }
@@ -295,20 +303,21 @@ function resizeTextarea() {
 function handleUpload(file) {
     if (!file) return;
     if (!file.name.toLowerCase().endsWith(".pdf")) {
-        uploadStatus.textContent = "Please select a PDF file.";
+        uploadStatus.textContent = "Please select a valid PDF file.";
         pdfInput.value = "";
         return;
     }
-    if (file.size > 10 * 1024 * 1024) {
-        uploadStatus.textContent = "Maximum file size is 10 MB.";
+    if (file.size > MAX_UPLOAD_BYTES) {
+        uploadStatus.textContent = `File exceeds the 100 MB limit (${(file.size / (1024 * 1024)).toFixed(1)} MB).`;
         pdfInput.value = "";
         return;
     }
 
+    const fileSizeMb = (file.size / (1024 * 1024)).toFixed(1);
     const formData = new FormData();
     formData.append("file", file);
     formData.append("session_id", getSessionId());
-    uploadStatus.textContent = "Uploading and indexing…";
+    uploadStatus.textContent = `Indexing ${file.name} (${fileSizeMb} MB)…`;
     pdfInput.disabled = true;
 
     requestJson("/upload", { method: "POST", body: formData })

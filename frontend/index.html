@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>RAG Assistant</title>
-    <meta name="description" content="AI document assistant powered by Groq, LangGraph, and Chroma." />
+    <title>Advanced CRAG Assistant</title>
+    <meta name="description" content="Corrective RAG AI assistant powered by Groq, Tavily Web Search, LangGraph, and Chroma." />
     <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -13,10 +13,10 @@
             <div class="sidebar-header">
                 <button class="sidebar-collapse" id="sidebar-toggle" type="button" aria-label="Toggle sidebar">☰</button>
                 <div class="brand">
-                    <div class="brand-mark">R</div>
+                    <div class="brand-mark">CR</div>
                     <div>
-                        <div class="brand-name">RAG Assistant</div>
-                        <div class="brand-subtitle">Document intelligence</div>
+                        <div class="brand-name">CRAG Assistant</div>
+                        <div class="brand-subtitle">Document + Tavily Web</div>
                     </div>
                 </div>
             </div>
@@ -24,7 +24,7 @@
             <button id="new-chat" class="primary-action" type="button">＋ New chat</button>
 
             <div class="panel-section">
-                <div class="panel-label">Knowledge base</div>
+                <div class="panel-label">Knowledge base (Up to 100 MB)</div>
                 <label class="secondary-action upload-trigger" for="pdf-file">Upload PDF</label>
                 <input id="pdf-file" type="file" accept=".pdf,application/pdf" hidden />
                 <div id="upload-status" class="upload-status" aria-live="polite">No PDF selected.</div>
@@ -42,8 +42,8 @@
         <main class="main-panel">
             <header class="topbar">
                 <div>
-                    <div class="eyebrow">AI workspace</div>
-                    <h1>Ask your documents</h1>
+                    <div class="eyebrow">CRAG Workspace</div>
+                    <h1>Corrective Retrieval & Web Search</h1>
                 </div>
                 <div class="topbar-actions">
                     <button id="suggest-btn" class="ghost-btn" type="button">Generate questions</button>
@@ -53,13 +53,13 @@
             <section class="chat-panel" aria-label="Conversation area">
                 <div id="welcome" class="welcome-state">
                     <div class="welcome-mark">✦</div>
-                    <h2>Ask a question about your documents.</h2>
-                    <p>Upload a PDF to create a grounded answer from your indexed material, or ask a general question when you want broader context.</p>
+                    <h2>Ask questions about your documents or the web.</h2>
+                    <p>Upload PDFs up to 100 MB. When local documents lack the answer, our Corrective RAG (CRAG) system automatically searches the web via Tavily to answer your question.</p>
                     <div id="suggestions" class="suggestion-grid" aria-label="Suggested prompts">
                         <button type="button" class="suggestion">Summarize this document.</button>
                         <button type="button" class="suggestion">Explain the key concepts.</button>
                         <button type="button" class="suggestion">Find the main findings.</button>
-                        <button type="button" class="suggestion">Identify important definitions.</button>
+                        <button type="button" class="suggestion">Search current web facts.</button>
                     </div>
                 </div>
                 <div id="messages" class="messages" aria-live="polite" aria-relevant="additions"></div>
@@ -67,10 +67,10 @@
 
             <footer class="composer-shell">
                 <form id="chat-form" class="composer" novalidate>
-                    <textarea id="question-input" name="question" rows="1" maxlength="4000" placeholder="Ask a question about your documents…" aria-label="Your question"></textarea>
+                    <textarea id="question-input" name="question" rows="1" maxlength="4000" placeholder="Ask a question about your documents or any topic…" aria-label="Your question"></textarea>
                     <button id="send-btn" class="send-btn" type="submit" aria-label="Send message">➤</button>
                 </form>
-                <div class="composer-footnote">AI-generated responses may contain mistakes; verify important claims against the source documents.</div>
+                <div class="composer-footnote">Powered by Corrective RAG (CRAG) + Tavily Web Search. Verify critical claims.</div>
             </footer>
         </main>
     </div>

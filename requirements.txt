@@ -13,3 +13,5 @@ langchain-huggingface
 langgraph
 sentence-transformers
 pypdf
+pymupdf
+tavily-python

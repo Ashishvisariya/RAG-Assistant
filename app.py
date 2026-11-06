@@ -10,29 +10,30 @@ from src.graph import ask_question, generate_questions
 from src.ingestion import create_vector_store, get_session_pdf_dir, normalize_session_id
 
 PROJECT_DIR = Path(__file__).resolve().parent
-MAX_FILE_SIZE = 10 * 1024 * 1024
+# Support up to 100 MB PDF uploads
+MAX_FILE_SIZE = 100 * 1024 * 1024
 INDEX_LOCK = Lock()
 
 
 def get_allowed_origins() -> list[str]:
     raw = os.getenv(
         "ALLOWED_ORIGINS",
-        "http://127.0.0.1:5500,http://localhost:5500,http://127.0.0.1:5501,http://localhost:5501,http://127.0.0.1:8000,http://localhost:8000,http://127.0.0.1:8001,http://localhost:8001",
+        "http://127.0.0.1:5500,http://localhost:5500,http://127.0.0.1:5501,http://localhost:5501,http://127.0.0.1:8000,http://localhost:8000,http://127.0.0.1:8001,http://localhost:8001,http://127.0.0.1:8501,http://localhost:8501",
     )
     return [origin.strip().rstrip("/") for origin in raw.split(",") if origin.strip()]
 
 
 app = FastAPI(
-    title="Advanced RAG System",
-    description="AI-powered document assistant using Groq + LangGraph + Chroma.",
-    version="1.1.0",
+    title="Advanced CRAG System",
+    description="AI-powered document assistant with Corrective RAG (CRAG) + Tavily Web Search + Groq + Chroma.",
+    version="2.0.0",
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=get_allowed_origins(),
+    allow_origins=["*"],
     allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
@@ -50,10 +51,11 @@ class SuggestedQuestionsRequest(BaseModel):
 @app.get("/")
 def root():
     return {
-        "message": "Advanced RAG System API is running.",
+        "message": "Advanced CRAG System API is running.",
         "docs": "/docs",
         "health": "/health",
         "ready": "/ready",
+        "max_upload_size_mb": 100,
     }
 
 
@@ -65,6 +67,7 @@ def health():
         "status": "healthy",
         "database_ready": get_vector_store() is not None,
         "groq_configured": bool(os.getenv("GROQ_API_KEY")),
+        "tavily_configured": bool(os.getenv("TAVILY_API_KEY")),
     }
 
 
@@ -84,6 +87,7 @@ def ready():
         "status": "ok" if groq_ready else "degraded",
         "groq_ready": groq_ready,
         "database_ready": get_vector_store() is not None,
+        "tavily_configured": bool(os.getenv("TAVILY_API_KEY")),
     }
 
 
@@ -104,11 +108,12 @@ def ask(request: QuestionRequest):
             "answer": payload.get("answer", ""),
             "answer_type": payload.get("answer_type", "general"),
             "sources": payload.get("sources", []),
+            "crag_decision": payload.get("crag_decision", "none"),
             "request_id": payload.get("request_id"),
             "session_id": session_id,
         }
     except Exception as exc:
-        print("Question answering failed.")
+        print(f"Question answering failed: {exc}")
         raise HTTPException(
             status_code=500,
             detail="An error occurred while answering your question.",
@@ -127,7 +132,7 @@ def questions(request: SuggestedQuestionsRequest):
             return {"questions": [], "message": "No indexed documents are available.", "session_id": session_id}
         return {"questions": result, "session_id": session_id}
     except Exception as exc:
-        print("Question generation failed.")
+        print(f"Question generation failed: {exc}")
         raise HTTPException(
             status_code=500,
             detail="Could not generate suggested questions.",
@@ -161,7 +166,7 @@ async def upload_pdf(file: UploadFile = File(...), session_id: str = Form(defaul
     try:
         content = await file.read(MAX_FILE_SIZE + 1)
         if len(content) > MAX_FILE_SIZE:
-            raise HTTPException(status_code=413, detail="PDF must be 10 MB or smaller.")
+            raise HTTPException(status_code=413, detail=f"PDF must be {MAX_FILE_SIZE // (1024 * 1024)} MB or smaller.")
         if not content.startswith(b"%PDF-"):
             raise HTTPException(status_code=400, detail="The uploaded file does not have a valid PDF header.")
 
@@ -181,7 +186,7 @@ async def upload_pdf(file: UploadFile = File(...), session_id: str = Form(defaul
                 create_vector_store(cleaned_session_id)
             except Exception as exc:
                 destination.unlink(missing_ok=True)
-                print("PDF indexing failed.")
+                print(f"PDF indexing failed: {exc}")
                 raise HTTPException(
                     status_code=500,
                     detail="PDF indexing failed. Check that the PDF contains readable text and inspect the backend logs.",
@@ -196,11 +201,8 @@ async def upload_pdf(file: UploadFile = File(...), session_id: str = Form(defaul
     except HTTPException:
         raise
     except Exception as exc:
-        print("PDF upload failed.")
+        print(f"PDF upload failed: {exc}")
         raise HTTPException(
             status_code=500,
-            detail="An unexpected error occurred during PDF upload.",
+            detail="An error occurred while uploading the file.",
         ) from exc
-    finally:
-        await file.close()
-

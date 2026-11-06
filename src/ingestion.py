@@ -4,9 +4,10 @@ import shutil
 import uuid
 from pathlib import Path
 from threading import Lock
+from typing import Generator, List
 
 from langchain_chroma import Chroma
-from langchain_community.document_loaders import PyPDFLoader
+from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -19,6 +20,10 @@ SESSION_DIR = DATA_DIR / "sessions"
 COLLECTION_NAME = "project_documents"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 INDEX_LOCK = Lock()
+
+# Global cached embedding model instance to avoid reloading heavy models
+_CACHED_EMBEDDINGS = None
+_EMBEDDINGS_LOCK = Lock()
 
 
 def normalize_session_id(session_id: str | None) -> str:
@@ -91,31 +96,63 @@ def write_active_chroma_dir(chroma_dir: Path, session_id: str | None = None) -> 
 
 
 def get_embeddings():
-    """Create the embedding model."""
-    return HuggingFaceEmbeddings(
-        model_name=EMBEDDING_MODEL,
-        model_kwargs={"device": "cpu"},
-    )
+    """Create or return cached HuggingFace embeddings model for fast reuse."""
+    global _CACHED_EMBEDDINGS
+    if _CACHED_EMBEDDINGS is not None:
+        return _CACHED_EMBEDDINGS
+
+    with _EMBEDDINGS_LOCK:
+        if _CACHED_EMBEDDINGS is None:
+            _CACHED_EMBEDDINGS = HuggingFaceEmbeddings(
+                model_name=EMBEDDING_MODEL,
+                model_kwargs={"device": "cpu"},
+                encode_kwargs={"batch_size": 64},  # Optimized batch encoding
+            )
+    return _CACHED_EMBEDDINGS
 
 
-def _load_pdf_documents(pdf_path: Path):
+def _load_pdf_pages_stream(pdf_path: Path) -> Generator[Document, None, None]:
+    """
+    Stream PDF pages lazily with high performance.
+    Uses PyMuPDF (fitz) if available for 10x-50x speedup and low memory on 100MB+ files;
+    falls back to PyPDFLoader if pymupdf is not available.
+    """
+    try:
+        import pymupdf  # Fast C++ engine
+
+        doc = pymupdf.open(str(pdf_path))
+        for page_num in range(len(doc)):
+            page = doc[page_num]
+            text = page.get_text()
+            if text and text.strip():
+                yield Document(
+                    page_content=text,
+                    metadata={"source": pdf_path.name, "page": page_num + 1},
+                )
+        doc.close()
+        return
+    except ImportError:
+        pass
+
+    # Fallback to pypdf
+    from langchain_community.document_loaders import PyPDFLoader
+
     loader = PyPDFLoader(str(pdf_path))
-    pages = loader.load()
-    documents = []
-
-    for page in pages:
-        metadata = dict(page.metadata or {})
-        metadata["source"] = pdf_path.name
-        metadata["page"] = int(metadata.get("page", 0)) + 1
-        page.metadata = metadata
-        if page.page_content and page.page_content.strip():
-            documents.append(page)
-
-    return documents
+    for page in loader.lazy_load():
+        text = page.page_content or ""
+        if text.strip():
+            metadata = dict(page.metadata or {})
+            metadata["source"] = pdf_path.name
+            metadata["page"] = int(metadata.get("page", 0)) + 1
+            page.metadata = metadata
+            yield page
 
 
-def create_vector_store(session_id: str | None = None):
-    """Load PDFs and rebuild the persistent Chroma vector store safely."""
+def create_vector_store(session_id: str | None = None, batch_size: int = 128):
+    """
+    Load PDFs and rebuild the persistent Chroma vector store safely.
+    Optimized for large documents up to 100 MB via generator streaming and batched chunk indexing.
+    """
     pdf_dir = get_session_pdf_dir(session_id)
     chroma_dir = get_session_chroma_dir(session_id)
     pdf_dir.mkdir(parents=True, exist_ok=True)
@@ -124,45 +161,70 @@ def create_vector_store(session_id: str | None = None):
     if not pdf_files:
         raise ValueError(f"No PDF files found in {pdf_dir}. Upload or add a PDF first.")
 
-    documents = []
-    for pdf_path in pdf_files:
-        try:
-            documents.extend(_load_pdf_documents(pdf_path))
-        except Exception as exc:
-            print("Skipping an unreadable PDF.")
-
-    if not documents:
-        raise ValueError("No readable text was found in the PDFs.")
-
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
         chunk_overlap=150,
         add_start_index=True,
     )
-    chunks = splitter.split_documents(documents)
-
-    if not chunks:
-        raise ValueError("No text chunks could be created from the PDFs.")
 
     embeddings = get_embeddings()
     active_dir = chroma_dir.parent / f"{chroma_dir.name}_{uuid.uuid4().hex}"
 
+    vector_store = None
+    total_chunks = 0
+    buffer_chunks: List[Document] = []
+
     try:
-        vector_store = Chroma.from_documents(
-            documents=chunks,
-            embedding=embeddings,
-            persist_directory=str(active_dir),
-            collection_name=COLLECTION_NAME,
-        )
+        for pdf_path in pdf_files:
+            try:
+                for doc in _load_pdf_pages_stream(pdf_path):
+                    page_chunks = splitter.split_documents([doc])
+                    buffer_chunks.extend(page_chunks)
+
+                    # Ingest in batches to prevent huge RAM spikes on 100MB files
+                    if len(buffer_chunks) >= batch_size:
+                        if vector_store is None:
+                            vector_store = Chroma.from_documents(
+                                documents=buffer_chunks,
+                                embedding=embeddings,
+                                persist_directory=str(active_dir),
+                                collection_name=COLLECTION_NAME,
+                            )
+                        else:
+                            vector_store.add_documents(buffer_chunks)
+                        total_chunks += len(buffer_chunks)
+                        buffer_chunks = []
+            except Exception as exc:
+                print(f"Skipping error in PDF {pdf_path.name}: {exc}")
+
+        # Ingest remaining chunks
+        if buffer_chunks:
+            if vector_store is None:
+                vector_store = Chroma.from_documents(
+                    documents=buffer_chunks,
+                    embedding=embeddings,
+                    persist_directory=str(active_dir),
+                    collection_name=COLLECTION_NAME,
+                )
+            else:
+                vector_store.add_documents(buffer_chunks)
+            total_chunks += len(buffer_chunks)
+            buffer_chunks = []
+
+        if total_chunks == 0 or vector_store is None:
+            raise ValueError("No readable text chunks could be extracted from the PDFs.")
+
         write_active_chroma_dir(active_dir, session_id)
 
         if chroma_dir.exists() and chroma_dir.is_dir():
             try:
                 shutil.rmtree(chroma_dir)
             except PermissionError:
-                print(f"Keeping existing active directory {chroma_dir} in place because it is still in use. The new index is active at {active_dir}.")
+                print(
+                    f"Keeping existing active directory {chroma_dir} in place because it is still in use. The new index is active at {active_dir}."
+                )
 
-        print(f"Vector store saved to: {active_dir}")
+        print(f"Vector store ({total_chunks} chunks) saved to: {active_dir}")
         return vector_store
     except Exception:
         if active_dir.exists():
